@@ -44,6 +44,13 @@ for casual dashboard use.
 | Key | Default | Description |
 |---|---|---|
 | `fast_flip_threshold_seconds` | `5` | A state with a duration below this gets the ⚡ flag and a subtle row highlight. |
+| `recorder_keep_days` | `10` | Match your recorder `purge_keep_days`. The card warns when Begin falls past this cutoff so you don't get a silently empty result. |
+
+Both options are also editable through the card's visual config editor
+(the gear icon when adding or editing a card). HA does not expose the
+recorder's real `purge_keep_days` to the frontend, so you have to tell
+the card if you've changed it from the default — otherwise the warning
+uses the wrong cutoff.
 
 Everything else — entity selection, time range, marks — is set
 interactively in the card itself.

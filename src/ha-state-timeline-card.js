@@ -207,9 +207,27 @@ class HaStateTimelineCard extends LitElement {
   setConfig(config) {
     const cfg = config || {};
     const t = Number(cfg.fast_flip_threshold_seconds);
+    const r = Number(cfg.recorder_keep_days);
     this._config = {
       fast_flip_threshold_seconds: Number.isFinite(t) && t > 0 ? t : 5,
+      // HA's recorder default is 10 days. We can't read the real value from
+      // hass (HA doesn't expose recorder config to the frontend at all — not
+      // via recorder/info, no REST endpoint, nowhere), so the user has to
+      // tell us if they've changed it. Used only to warn before searches
+      // that will silently return empty.
+      recorder_keep_days: Number.isFinite(r) && r > 0 ? r : 10,
     };
+  }
+
+  // Visual editor entry point. HA's card framework calls this when the user
+  // clicks the gear icon on a card; we hand back our editor element and HA
+  // wires up the config-changed event automatically.
+  static getConfigElement() {
+    return document.createElement('ha-state-timeline-card-editor');
+  }
+
+  static getStubConfig() {
+    return { fast_flip_threshold_seconds: 5, recorder_keep_days: 10 };
   }
 
   // Used by HA to size the card in masonry/grid layout. The stepper expands
@@ -687,8 +705,25 @@ class HaStateTimelineCard extends LitElement {
             <button class="chip" @click=${this._setEndToNow}>Now</button>
           </div>
         </div>
+        ${this._renderRetentionWarning()}
       </section>
     `;
+  }
+
+  // Surface the recorder retention boundary up-front. Without this an empty
+  // result from a too-old query is indistinguishable from "nothing changed,"
+  // which is the silent-failure trap we explicitly want to avoid.
+  _renderRetentionWarning() {
+    if (!this._beginInput) return '';
+    const begin = parseLocalInput(this._beginInput, this._timeZone);
+    if (!begin) return '';
+    const keepDays = this._config.recorder_keep_days;
+    const cutoff = new Date(Date.now() - keepDays * 86400000);
+    if (begin >= cutoff) return '';
+    return html`<div class="retention-warning">
+      Begin is older than your recorder retention (${keepDays} days). Entries past the
+      cutoff have likely been purged — this query may return empty or partial results.
+    </div>`;
   }
 
   _renderSearchSection() {
@@ -860,6 +895,8 @@ class HaStateTimelineCard extends LitElement {
       font-size: 0.95em; align-self: flex-start; }
     .primary-btn[disabled] { opacity: 0.6; cursor: wait; }
     .error { color: var(--error-color); font-size: 0.9em; }
+    .retention-warning { color: var(--warning-color); font-size: 0.85em;
+                         padding: 4px 0; line-height: 1.3; }
 
     .stepper-header { display: flex; justify-content: space-between; align-items: baseline;
                       padding-bottom: 4px; border-bottom: 1px solid var(--divider-color); }
@@ -914,6 +951,71 @@ class HaStateTimelineCard extends LitElement {
 }
 
 customElements.define('ha-state-timeline-card', HaStateTimelineCard);
+
+// -----------------------------------------------------------------------------
+// Visual config editor
+//
+// HA provides `ha-form`, a schema-driven form element that handles inputs,
+// labels, validation, and theming for us. We declare a schema and let it
+// render — no hand-built UI. The editor receives the current config via
+// setConfig() and dispatches `config-changed` events that the card framework
+// uses to update the YAML representation.
+// -----------------------------------------------------------------------------
+
+const EDITOR_SCHEMA = [
+  { name: 'fast_flip_threshold_seconds', required: false,
+    selector: { number: { min: 1, max: 600, mode: 'box', unit_of_measurement: 's' } } },
+  { name: 'recorder_keep_days', required: false,
+    selector: { number: { min: 1, max: 3650, mode: 'box', unit_of_measurement: 'days' } } },
+];
+
+const EDITOR_LABELS = {
+  fast_flip_threshold_seconds: 'Fast flip threshold (seconds)',
+  recorder_keep_days: 'Recorder retention (days)',
+};
+
+const EDITOR_HELPERS = {
+  fast_flip_threshold_seconds: 'State changes shorter than this get a ⚡ flag and row highlight.',
+  recorder_keep_days: 'Match your recorder purge_keep_days. Used only to warn when Begin exceeds retention.',
+};
+
+class HaStateTimelineCardEditor extends LitElement {
+  static properties = {
+    hass: { attribute: false },
+    _config: { state: true },
+  };
+
+  setConfig(config) { this._config = { ...config }; }
+
+  _onValueChanged(ev) {
+    // ha-form emits the full merged config in detail.value. Forward it
+    // upward so the card framework can persist it back to YAML.
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: ev.detail.value },
+      bubbles: true, composed: true,
+    }));
+  }
+
+  render() {
+    if (!this.hass || !this._config) return html``;
+    return html`
+      <ha-form
+        .hass=${this.hass}
+        .data=${this._config}
+        .schema=${EDITOR_SCHEMA}
+        .computeLabel=${(s) => EDITOR_LABELS[s.name] || s.name}
+        .computeHelper=${(s) => EDITOR_HELPERS[s.name] || ''}
+        @value-changed=${this._onValueChanged}
+      ></ha-form>
+    `;
+  }
+
+  static styles = css`
+    ha-form { display: block; padding: 8px 0; }
+  `;
+}
+
+customElements.define('ha-state-timeline-card-editor', HaStateTimelineCardEditor);
 
 // Register with HA's custom card directory so it shows up in the visual card
 // picker and so the dev-tools "view card" link works.
