@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.js"
+    "build": "node build.js",
+    "deploy": "npm run build && node deploy.js"
   },
   "dependencies": {
     "lit": "^3.1.4"

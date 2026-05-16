@@ -272,7 +272,24 @@ class HaStateTimelineCard extends LitElement {
   }
 
   _onDeviceChanged(ev) {
-    this._selectedDeviceId = (ev.detail && ev.detail.value) || null;
+    this._selectedDeviceId = ev.target.value || null;
+  }
+
+  // Devices sorted for the picker. `name_by_user` is the user-renamed label,
+  // `name` is the manufacturer default. Filter out disabled entries — they
+  // can't have queryable entities anyway. Including the area suffix helps
+  // disambiguate the "Hue motion sensor (Kitchen)" vs "...(Bedroom)" case.
+  _sortedDevices() {
+    if (!this.hass || !this.hass.devices) return [];
+    const areas = this.hass.areas || {};
+    return Object.values(this.hass.devices)
+      .filter((d) => !d.disabled_by)
+      .map((d) => ({
+        id: d.id,
+        label: d.name_by_user || d.name || d.id,
+        area: d.area_id && areas[d.area_id] ? areas[d.area_id].name : '',
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
   }
 
   _toggleEntity(entityId) {
@@ -324,14 +341,20 @@ class HaStateTimelineCard extends LitElement {
   }
 
   _onAddEntity(ev) {
-    const value = ev.detail && ev.detail.value;
+    const value = ev.target.value;
     if (!value) return;
+    // Validate against hass.states so a typo doesn't add a phantom entity.
+    // We allow datalist autocomplete to drive most picks but accept manual
+    // typing too — the validation is the gate.
+    if (!this.hass || !this.hass.states || !this.hass.states[value]) {
+      ev.target.value = '';
+      return;
+    }
     // Add to both the manual-add list (so it shows up under "other") and the
     // selected set (so the user doesn't need a second click).
     const added = new Set(this._addedEntities); added.add(value); this._addedEntities = added;
     const sel = new Set(this._selectedEntities); sel.add(value); this._selectedEntities = sel;
-    // Reset the picker so the user can add another without clearing it first.
-    if (ev.target) ev.target.value = '';
+    ev.target.value = '';
   }
 
   // --------------------------------------------------------------------------
@@ -645,11 +668,21 @@ class HaStateTimelineCard extends LitElement {
     const groups = this._entitiesForDevice(this._selectedDeviceId);
     const hasDevice = Object.keys(groups).length > 0;
     const otherEntities = Array.from(this._addedEntities);
+    const devices = this._sortedDevices();
+    const allEntities = this.hass && this.hass.states ? Object.keys(this.hass.states).sort() : [];
     return html`
       <section class="block">
         <h3>Entities</h3>
-        <ha-device-picker .hass=${this.hass} .value=${this._selectedDeviceId || ''}
-          @value-changed=${this._onDeviceChanged} label="Device"></ha-device-picker>
+        <label class="picker-label">Device
+          <select class="native-picker" .value=${this._selectedDeviceId || ''} @change=${this._onDeviceChanged}>
+            <option value="">— Select a device —</option>
+            ${devices.map((d) => html`
+              <option value=${d.id} ?selected=${d.id === this._selectedDeviceId}>
+                ${d.area ? `${d.label} — ${d.area}` : d.label}
+              </option>
+            `)}
+          </select>
+        </label>
         ${hasDevice ? html`
           <div class="row links">
             <a @click=${this._selectAllForDevice}>Select all</a>
@@ -664,8 +697,13 @@ class HaStateTimelineCard extends LitElement {
           <div class="group-label">other</div>
           ${otherEntities.map((id) => this._renderEntityRow(id))}
         ` : ''}
-        <ha-entity-picker .hass=${this.hass} allow-custom-entity
-          @value-changed=${this._onAddEntity} label="+ Add entity"></ha-entity-picker>
+        <label class="picker-label">Add entity
+          <input class="native-picker" list="hstc-entity-list" placeholder="domain.entity_id"
+            @change=${this._onAddEntity} />
+          <datalist id="hstc-entity-list">
+            ${allEntities.map((id) => html`<option value=${id}></option>`)}
+          </datalist>
+        </label>
       </section>
     `;
   }
@@ -869,6 +907,13 @@ class HaStateTimelineCard extends LitElement {
     .group-label { margin-top: 8px; font-size: 0.75em; text-transform: uppercase;
                    color: var(--secondary-text-color); letter-spacing: 0.06em;
                    border-bottom: 1px solid var(--divider-color); padding-bottom: 2px; }
+    .picker-label { display: flex; flex-direction: column; gap: 2px;
+                    font-size: 0.8em; color: var(--secondary-text-color); }
+    .native-picker { background: var(--card-background-color);
+      color: var(--primary-text-color); border: 1px solid var(--divider-color);
+      border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 0.95em;
+      width: 100%; box-sizing: border-box; }
+    .native-picker:focus { outline: none; border-color: var(--primary-color); }
     .entity-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
     .entity-row input[type='checkbox'] { accent-color: var(--primary-color); }
     .star { background: none; border: none; cursor: pointer; font-size: 1.2em;
