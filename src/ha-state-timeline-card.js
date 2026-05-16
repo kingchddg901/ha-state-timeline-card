@@ -110,11 +110,17 @@ function formatDuration(seconds) {
 
 // Local ISO string with offset, for the timestamp_local export field.
 // e.g. "2026-05-14T05:49:03-04:00".
+//
+// Seconds come from getUTCSeconds() rather than Intl.DateTimeFormat because
+// `Intl.DateTimeFormat({second:'2-digit'})` does NOT consistently pad to two
+// digits when `second` is the only field requested — produces "9" instead
+// of "09". Seconds within a minute are timezone-independent (offsets are
+// whole minutes, even for :30 zones), so UTC seconds == local seconds.
 function formatLocalIsoWithOffset(iso, timeZone) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   const local = formatLocalInput(d, timeZone);
-  const sec = new Intl.DateTimeFormat('en-GB', { timeZone, second: '2-digit', hour12: false }).format(d);
+  const sec = String(d.getUTCSeconds()).padStart(2, '0');
   const off = getZoneOffsetMs(d, timeZone);
   const sign = off >= 0 ? '+' : '-';
   const abs = Math.abs(off);
@@ -496,7 +502,7 @@ class HaStateTimelineCard extends LitElement {
     const perEntity = {};
     for (const id of entities) {
       const raw = response[id] || [];
-      const list = raw.map((row) => {
+      const mapped = raw.map((row) => {
         // history/history_during_period returns a COMPACT format whose keys
         // differ from the regular state object:
         //   s  = state          (vs. .state)
@@ -520,6 +526,23 @@ class HaStateTimelineCard extends LitElement {
         // History endpoints may return slightly out-of-order rows when the
         // recorder is under load. Sort defensively.
         .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+
+      // Dedupe consecutive rows where state AND attributes are byte-identical.
+      // HA's recorder occasionally emits multiple rows for the same entity
+      // within a single logging tick when the source pushed several updates;
+      // those produce phantom steps with no real difference. Comparing
+      // attributes via JSON.stringify is good enough — order is stable across
+      // the same source.
+      const list = [];
+      for (const row of mapped) {
+        const last = list[list.length - 1];
+        if (last && last.state === row.state &&
+            JSON.stringify(last.attributes) === JSON.stringify(row.attributes)) {
+          continue;
+        }
+        list.push(row);
+      }
+
       for (let i = 0; i < list.length; i++) {
         list[i].durationSeconds = i < list.length - 1
           ? (new Date(list[i + 1].ts).getTime() - new Date(list[i].ts).getTime()) / 1000
@@ -528,9 +551,18 @@ class HaStateTimelineCard extends LitElement {
       perEntity[id] = { list, idx: 0 };
     }
 
-    // Master event list, sorted; ties broken by entity_id for determinism.
+    // Master event list. Skip each entity's FIRST row — it represents the
+    // entity's initial state at window-start (whether synthesized by HA or
+    // just the earliest row in the window), not a transition. Including it
+    // produces phantom "change" steps where previousState is null and the
+    // shown "change" is really the first observation. Real transitions
+    // (rows 1+) are the actual events. Ties on timestamp broken by
+    // entity_id for determinism.
     const events = [];
-    for (const id of entities) for (const row of perEntity[id].list) events.push({ ts: row.ts, entityId: id });
+    for (const id of entities) {
+      const pl = perEntity[id].list;
+      for (let i = 1; i < pl.length; i++) events.push({ ts: pl[i].ts, entityId: id });
+    }
     events.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.entityId.localeCompare(b.entityId)));
 
     const threshold = this._config.fast_flip_threshold_seconds;
