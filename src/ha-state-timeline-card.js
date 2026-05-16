@@ -158,6 +158,7 @@ class HaStateTimelineCard extends LitElement {
     _reference: { state: true },          // imported JSON object (normalized)
     _refCurrentStep: { state: true },     // cursor for the reference stepper
     _entityCollapsed: { state: true },    // collapse the entity-selection block
+    _collapsedDomains: { state: true },   // Set<string> of collapsed domain groups
   };
 
   constructor() {
@@ -179,6 +180,7 @@ class HaStateTimelineCard extends LitElement {
     this._reference = null;
     this._refCurrentStep = 0;
     this._entityCollapsed = false;
+    this._collapsedDomains = new Set();
   }
 
   // Restore persisted entity selection and time range. localStorage is per-
@@ -342,6 +344,30 @@ class HaStateTimelineCard extends LitElement {
     this._selectedEntities = next;
   }
 
+  _toggleDomain(domain) {
+    const next = new Set(this._collapsedDomains);
+    next.has(domain) ? next.delete(domain) : next.add(domain);
+    this._collapsedDomains = next;
+  }
+
+  // Smart select-all per domain: if every entity in the domain is already
+  // selected, this deselects them; otherwise selects them. One affordance,
+  // both directions — less UI noise than separate select/deselect links.
+  _toggleAllInDomain(domain) {
+    const ids = this._entitiesForDevice(this._selectedDeviceId)[domain] || [];
+    const allChecked = ids.length > 0 && ids.every((id) => this._selectedEntities.has(id));
+    const next = new Set(this._selectedEntities);
+    if (allChecked) {
+      for (const id of ids) {
+        next.delete(id);
+        if (this._driverEntityId === id) this._driverEntityId = null;
+      }
+    } else {
+      for (const id of ids) next.add(id);
+    }
+    this._selectedEntities = next;
+  }
+
   _deselectAllForDevice() {
     const groups = this._entitiesForDevice(this._selectedDeviceId);
     const next = new Set(this._selectedEntities);
@@ -352,6 +378,20 @@ class HaStateTimelineCard extends LitElement {
       }
     }
     this._selectedEntities = next;
+  }
+
+  // Fully remove a manually-added entity: drop from the manual-add list AND
+  // from the selected set, and clear the driver pointer if it was driving.
+  // Device-discovered entities don't expose this — they reappear next render
+  // anyway because they come from hass.entities.
+  _removeAddedEntity(entityId) {
+    const added = new Set(this._addedEntities);
+    added.delete(entityId);
+    this._addedEntities = added;
+    const sel = new Set(this._selectedEntities);
+    sel.delete(entityId);
+    this._selectedEntities = sel;
+    if (this._driverEntityId === entityId) this._driverEntityId = null;
   }
 
   _onAddEntity(ev) {
@@ -739,10 +779,23 @@ class HaStateTimelineCard extends LitElement {
             <a @click=${this._selectAllForDevice}>Select all</a>
             <a @click=${this._deselectAllForDevice}>Deselect all</a>
           </div>
-          ${Object.keys(groups).sort().map((domain) => html`
-            <div class="group-label">${domain}</div>
-            ${groups[domain].map((id) => this._renderEntityRow(id))}
-          `)}
+          ${Object.keys(groups).sort().map((domain) => {
+            const ids = groups[domain];
+            const isCollapsed = this._collapsedDomains.has(domain);
+            const selCount = ids.filter((id) => this._selectedEntities.has(id)).length;
+            const allChecked = selCount === ids.length;
+            return html`
+              <div class="group-header" @click=${() => this._toggleDomain(domain)}>
+                <span class="chevron">${isCollapsed ? '▶' : '▼'}</span>
+                <span class="group-label-text">${domain}</span>
+                <span class="group-count">${selCount}/${ids.length}</span>
+                <a class="group-action" @click=${(e) => { e.stopPropagation(); this._toggleAllInDomain(domain); }}>
+                  ${allChecked ? 'Deselect all' : 'Select all'}
+                </a>
+              </div>
+              ${isCollapsed ? '' : ids.map((id) => this._renderEntityRow(id))}
+            `;
+          })}
         ` : ''}
         ${otherEntities.length > 0 ? html`
           <div class="group-label">other</div>
@@ -755,6 +808,7 @@ class HaStateTimelineCard extends LitElement {
             ${allEntities.map((id) => html`<option value=${id}></option>`)}
           </datalist>
         </label>
+        <div class="hint">★ marks the driver — shown first in the stepper and used as the export filename prefix. × removes a manually added entity.</div>
         `}
       </section>
     `;
@@ -763,6 +817,7 @@ class HaStateTimelineCard extends LitElement {
   _renderEntityRow(entityId) {
     const checked = this._selectedEntities.has(entityId);
     const isDriver = this._driverEntityId === entityId;
+    const isAdded = this._addedEntities.has(entityId);
     return html`
       <div class="entity-row">
         <input type="checkbox" .checked=${checked} @change=${() => this._toggleEntity(entityId)} />
@@ -772,6 +827,8 @@ class HaStateTimelineCard extends LitElement {
           <div class="primary">${this._friendlyName(entityId)}</div>
           <div class="secondary">${entityId}</div>
         </div>
+        ${isAdded ? html`<button class="remove-btn" title="Remove entity"
+          @click=${() => this._removeAddedEntity(entityId)}>×</button>` : ''}
       </div>
     `;
   }
@@ -860,6 +917,7 @@ class HaStateTimelineCard extends LitElement {
             @click=${this._exportSelection}>Export Selection</button>
           <button class="export-btn" @click=${this._exportAll}>Export All</button>
         </div>
+        <div class="hint">⚡ = state change shorter than ${this._config.fast_flip_threshold_seconds}s. ▶ on a row expands the raw attributes JSON. Mark Start + Mark End enables Export Selection.</div>
       </section>
     `;
   }
@@ -966,6 +1024,16 @@ class HaStateTimelineCard extends LitElement {
     .group-label { margin-top: 8px; font-size: 0.75em; text-transform: uppercase;
                    color: var(--secondary-text-color); letter-spacing: 0.06em;
                    border-bottom: 1px solid var(--divider-color); padding-bottom: 2px; }
+    .group-header { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+                    padding-bottom: 2px; border-bottom: 1px solid var(--divider-color);
+                    cursor: pointer; user-select: none; }
+    .group-header:hover .group-label-text { color: var(--primary-text-color); }
+    .group-label-text { font-size: 0.75em; text-transform: uppercase;
+                        letter-spacing: 0.06em; color: var(--secondary-text-color); }
+    .group-count { font-size: 0.75em; color: var(--secondary-text-color);
+                   font-family: var(--code-font-family, monospace); }
+    .group-action { margin-left: auto; font-size: 0.8em; color: var(--primary-color);
+                    cursor: pointer; text-decoration: underline; }
     .picker-label { display: flex; flex-direction: column; gap: 2px;
                     font-size: 0.8em; color: var(--secondary-text-color); }
     .native-picker { background: var(--card-background-color);
@@ -981,6 +1049,12 @@ class HaStateTimelineCard extends LitElement {
     .entity-label .primary { font-size: 0.95em; color: var(--primary-text-color); }
     .entity-label .secondary { font-size: 0.8em; color: var(--secondary-text-color);
                                font-family: var(--code-font-family, monospace); }
+    .remove-btn { background: none; border: none; cursor: pointer;
+                  color: var(--secondary-text-color); font-size: 1.2em;
+                  line-height: 1; padding: 0 6px; margin-left: auto; }
+    .remove-btn:hover { color: var(--error-color); }
+    .hint { font-size: 0.8em; color: var(--secondary-text-color);
+            font-style: italic; padding: 4px 0; line-height: 1.4; }
 
     .time-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
     .time-row label { display: flex; flex-direction: column; font-size: 0.8em;
