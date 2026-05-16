@@ -43,13 +43,17 @@ function formatLocalInput(date, timeZone) {
   return `${m.year}-${m.month}-${m.day}T${hour}:${m.minute}`;
 }
 
-// Given a wall-clock string "YYYY-MM-DDTHH:mm" interpreted in timeZone,
-// return the corresponding UTC Date.
+// Given a wall-clock string "YYYY-MM-DDTHH:mm" (optionally with ":SS" or
+// ":SS.sss" appended — Chrome's datetime-local input sometimes adds seconds)
+// interpreted in timeZone, return the corresponding UTC Date.
 function parseLocalInput(value, timeZone) {
   if (!value) return null;
-  // Treat the string as if it were UTC, then correct by the zone's offset at
-  // that wall-clock moment. Offset varies across DST, so compute per-instant.
-  const asUtc = new Date(value + ':00.000Z');
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(value);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm, ss] = m;
+  // Treat as UTC, then correct by the zone's offset at that wall-clock moment.
+  // Offset varies across DST, so it must be computed per-instant.
+  const asUtc = new Date(`${y}-${mo}-${d}T${hh}:${mm}:${ss || '00'}.000Z`);
   if (isNaN(asUtc.getTime())) return null;
   return new Date(asUtc.getTime() - getZoneOffsetMs(asUtc, timeZone));
 }
