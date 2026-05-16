@@ -46,16 +46,24 @@ function formatLocalInput(date, timeZone) {
 // Given a wall-clock string "YYYY-MM-DDTHH:mm" (optionally with ":SS" or
 // ":SS.sss" appended — Chrome's datetime-local input sometimes adds seconds)
 // interpreted in timeZone, return the corresponding UTC Date.
+//
+// Returns null on any failure (bad regex match, invalid Date construction,
+// thrown timezone, NaN offset). The caller treats null as "couldn't parse"
+// rather than propagating an Invalid Date that would later throw on
+// .toISOString() with the generic "Invalid time value" message.
 function parseLocalInput(value, timeZone) {
   if (!value) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(value);
   if (!m) return null;
   const [, y, mo, d, hh, mm, ss] = m;
-  // Treat as UTC, then correct by the zone's offset at that wall-clock moment.
-  // Offset varies across DST, so it must be computed per-instant.
   const asUtc = new Date(`${y}-${mo}-${d}T${hh}:${mm}:${ss || '00'}.000Z`);
   if (isNaN(asUtc.getTime())) return null;
-  return new Date(asUtc.getTime() - getZoneOffsetMs(asUtc, timeZone));
+  let offset;
+  try { offset = getZoneOffsetMs(asUtc, timeZone); }
+  catch { return null; }
+  if (!Number.isFinite(offset)) return null;
+  const result = new Date(asUtc.getTime() - offset);
+  return isNaN(result.getTime()) ? null : result;
 }
 
 // Offset between UTC and timeZone at the given instant, in milliseconds.
@@ -149,6 +157,7 @@ class HaStateTimelineCard extends LitElement {
     _expanded: { state: true },           // Set<string> of expanded entityIds
     _reference: { state: true },          // imported JSON object (normalized)
     _refCurrentStep: { state: true },     // cursor for the reference stepper
+    _entityCollapsed: { state: true },    // collapse the entity-selection block
   };
 
   constructor() {
@@ -169,6 +178,7 @@ class HaStateTimelineCard extends LitElement {
     this._expanded = new Set();
     this._reference = null;
     this._refCurrentStep = 0;
+    this._entityCollapsed = false;
   }
 
   // Restore persisted entity selection and time range. localStorage is per-
@@ -387,7 +397,15 @@ class HaStateTimelineCard extends LitElement {
     const tz = this._timeZone;
     const startDate = parseLocalInput(this._beginInput, tz);
     const endDate = parseLocalInput(this._endInput, tz);
-    if (!startDate || !endDate || endDate <= startDate) {
+    // Parser returns null on any failure — surface a diagnostic message
+    // (with the raw inputs and resolved timezone) instead of letting an
+    // Invalid Date slip through and throw the opaque "Invalid time value"
+    // error from .toISOString() downstream.
+    if (!startDate || !endDate) {
+      this._error = `Couldn't parse time inputs (begin="${this._beginInput}" end="${this._endInput}" tz="${tz}")`;
+      return;
+    }
+    if (endDate <= startDate) {
       this._error = 'End must be after Begin'; return;
     }
 
@@ -438,11 +456,27 @@ class HaStateTimelineCard extends LitElement {
     const perEntity = {};
     for (const id of entities) {
       const raw = response[id] || [];
-      const list = raw.map((row) => ({
-        ts: new Date(row.last_changed || row.last_updated).toISOString(),
-        state: row.state,
-        attributes: row.attributes || {},
-      }))
+      const list = raw.map((row) => {
+        // history/history_during_period returns a COMPACT format whose keys
+        // differ from the regular state object:
+        //   s  = state          (vs. .state)
+        //   a  = attributes     (vs. .attributes)
+        //   lu = last_updated   as float seconds (vs. .last_updated ISO string)
+        //   lc = last_changed   as float seconds, may be omitted if == lu
+        // We accept both shapes so the code doesn't silently break if HA
+        // changes the encoding again or returns legacy rows in some path.
+        const luMs = typeof row.lu === 'number' ? row.lu * 1000 : null;
+        const lcMs = typeof row.lc === 'number' ? row.lc * 1000 : luMs;
+        const tsMs = lcMs !== null ? lcMs : luMs;
+        const ts = tsMs !== null
+          ? new Date(tsMs)
+          : new Date(row.last_changed || row.last_updated);
+        return {
+          ts: ts.toISOString(),
+          state: row.s !== undefined ? row.s : row.state,
+          attributes: row.a || row.attributes || {},
+        };
+      })
         // History endpoints may return slightly out-of-order rows when the
         // recorder is under load. Sort defensively.
         .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
@@ -674,9 +708,22 @@ class HaStateTimelineCard extends LitElement {
     const otherEntities = Array.from(this._addedEntities);
     const devices = this._sortedDevices();
     const allEntities = this.hass && this.hass.states ? Object.keys(this.hass.states).sort() : [];
+    const collapsed = this._entityCollapsed;
+    // One-line summary shown when collapsed: count + driver friendly name
+    // so the user knows what they're querying without expanding the section.
+    const selCount = this._selectedEntities.size;
+    const driverName = this._driverEntityId ? this._friendlyName(this._driverEntityId) : null;
+    const summary = collapsed
+      ? `${selCount} ${selCount === 1 ? 'entity' : 'entities'}${driverName ? ` · ★ ${driverName}` : ''}`
+      : '';
     return html`
       <section class="block">
-        <h3>Entities</h3>
+        <h3 class="collapsible" @click=${() => this._entityCollapsed = !collapsed}>
+          <span class="chevron">${collapsed ? '▶' : '▼'}</span>
+          Entities
+          ${collapsed ? html`<span class="header-summary">${summary}</span>` : ''}
+        </h3>
+        ${collapsed ? '' : html`
         <label class="picker-label">Device
           <select class="native-picker" .value=${this._selectedDeviceId || ''} @change=${this._onDeviceChanged}>
             <option value="">— Select a device —</option>
@@ -708,6 +755,7 @@ class HaStateTimelineCard extends LitElement {
             ${allEntities.map((id) => html`<option value=${id}></option>`)}
           </datalist>
         </label>
+        `}
       </section>
     `;
   }
@@ -904,6 +952,13 @@ class HaStateTimelineCard extends LitElement {
     .block { display: flex; flex-direction: column; gap: 8px; }
     h3 { margin: 0; font-size: 0.95em; font-weight: 500; color: var(--secondary-text-color);
          text-transform: uppercase; letter-spacing: 0.04em; }
+    h3.collapsible { cursor: pointer; user-select: none; display: flex;
+                     align-items: center; gap: 6px; }
+    h3.collapsible:hover { color: var(--primary-text-color); }
+    h3 .chevron { font-size: 0.7em; color: var(--secondary-text-color); }
+    h3 .header-summary { font-weight: 400; text-transform: none; letter-spacing: 0;
+                         color: var(--primary-text-color); margin-left: 8px;
+                         font-size: 0.95em; }
     .empty { padding: 24px; color: var(--secondary-text-color); text-align: center; }
     .row { display: flex; gap: 8px; align-items: center; }
     .links { gap: 16px; font-size: 0.9em; }
