@@ -1,6 +1,6 @@
 {
   "name": "ha-state-timeline-card",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Step through HA recorder state transitions across multiple entities.",
   "private": true,
   "type": "module",
