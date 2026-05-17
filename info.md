@@ -1,8 +1,19 @@
 # State Timeline Card
 
-A developer-focused Lovelace card for stepping through HA recorder state
-transitions across multiple entities at once. Built for debugging
-automations and integration work.
+A **state viewer** for Home Assistant — walks you through state
+transitions across multiple entities at once. Not a history viewer
+(that's HA's built-in chart); this answers "what was every entity
+doing at the moment this event fired."
+
+Built for two main use cases:
+
+- **Derived-state inference sensors.** Find the multi-entity signature
+  of an event no single entity reports — "dishwasher actually
+  finished," "vacuum stuck mid-run," "garage open with no car" — and
+  turn it into a template or trigger-based binary_sensor.
+- **Integration porting.** Capture canonical events on a known device,
+  side-by-side them against a new device via the twin stepper, map
+  the new device's entities to a canonical event grammar.
 
 ## Quick start
 
@@ -16,13 +27,13 @@ Then in any dashboard:
 
 ```yaml
 type: custom:ha-state-timeline-card
-fast_flip_threshold_seconds: 5   # optional, default 5
 ```
 
-## Features
+Visual config editor (gear icon) covers options. Detailed workflow in
+[USAGE.md](docs/USAGE.md), export format in [EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md).
 
-- Multi-entity timeline stepping in one view
-- Side-by-side twin stepper for comparing against a saved reference
-- Per-step duration and fast-flip detection
-- JSON export and re-import for cross-session comparison
-- Persists entity selection and time range across reloads
+## Heads up
+
+Desktop only. Recorder retention is a hard floor — you can't query
+past your `purge_keep_days`. Reference comparison is visual (side-by-
+side twin steppers), not automated diff.

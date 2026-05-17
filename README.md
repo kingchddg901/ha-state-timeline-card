@@ -1,87 +1,99 @@
 # ha-state-timeline-card
 
-A developer-focused Home Assistant Lovelace card that queries the HA
-recorder and lets you step through state transitions across multiple
-entities at once. Built for debugging automations and integrations, not
-for casual dashboard use.
+A Home Assistant Lovelace card that queries the recorder and lets you
+step through state transitions across multiple entities at once.
 
-## What it does
+It's a **state viewer**, not a history viewer. The HA history viewer
+charts values over time and wins for "where did temperature go this
+week." This card walks you through transitions between states across a
+correlated multi-entity view and wins for "what was every entity doing
+at the moment this event fired."
 
-- Pick a device (or individual entities) and select which ones to include
-- Set a time window in the HA instance's configured timezone
-- Query the recorder via the `history/history_during_period` websocket call
-- Step forward and backward through every state change in the window
-- For each step, see every selected entity's current state, previous state,
-  and how long it stayed there
-- Flag "fast flips" (state changes shorter than a configurable threshold)
-- Mark a start and end step, then export the slice (or all of it) as JSON
-- Re-import a previously exported JSON for side-by-side reference
+## When this is the right tool
+
+- You're building a derived-state binary sensor and need to find the
+  multi-entity signature of an event that no single entity reports.
+  Examples: "dishwasher actually finished," "vacuum stuck mid-run,"
+  "garage open with no car."
+- You're porting an integration and need to map a new device's entities
+  to a canonical event grammar — load a reference export, side-by-side
+  it against the new device, find the analog transitions.
+- You're debugging an automation that fires (or doesn't) on a specific
+  combination of state changes and need to see every entity at the
+  exact moment things went wrong.
+
+## When this is the wrong tool
+
+- You want a chart of one sensor's value over time → HA history viewer.
+- You want statistics or aggregations → HA statistics.
+- You want a generic event log → HA logbook.
+- You want a phone-friendly dashboard card → not this; desktop only.
 
 ## Installation
+
+### HACS (recommended)
+
+1. **HACS → ⋮ → Custom repositories**
+2. Add `kingchddg901/ha-state-timeline-card` as **Lovelace**
+3. Install **State Timeline Card**
+4. Add a JavaScript Module dashboard resource:
+   `/hacsfiles/ha-state-timeline-card/ha-state-timeline-card.js`
+5. Add the card to a dashboard:
+
+   ```yaml
+   type: custom:ha-state-timeline-card
+   ```
 
 ### Manual
 
 1. Copy `dist/ha-state-timeline-card.js` into `<config>/www/`
-2. Add it as a dashboard resource:
-   - **Settings → Dashboards → ⋮ → Resources → Add resource**
-   - URL: `/local/ha-state-timeline-card.js`
-   - Type: **JavaScript Module**
-3. Add the card to a dashboard:
-
-   ```yaml
-   type: custom:ha-state-timeline-card
-   fast_flip_threshold_seconds: 5   # optional, default 5
-   ```
-
-### HACS (custom repository)
-
-1. **HACS → ⋮ → Custom repositories**
-2. Add this repository as **Lovelace**
-3. Install **State Timeline Card**
+2. Add a JavaScript Module dashboard resource: `/local/ha-state-timeline-card.js`
+3. Add the card YAML as above.
 
 ## Configuration
 
 | Key | Default | Description |
 |---|---|---|
-| `fast_flip_threshold_seconds` | `5` | A state with a duration below this gets the ⚡ flag and a subtle row highlight. |
-| `recorder_keep_days` | `10` | Match your recorder `purge_keep_days`. The card warns when Begin falls past this cutoff so you don't get a silently empty result. |
+| `fast_flip_threshold_seconds` | `5` | A state with a duration below this gets the ⚡ flag and a row highlight. |
+| `recorder_keep_days` | `10` | Match your recorder `purge_keep_days` so the retention warning fires at the right cutoff. |
 
-Both options are also editable through the card's visual config editor
-(the gear icon when adding or editing a card). HA does not expose the
-recorder's real `purge_keep_days` to the frontend, so you have to tell
-the card if you've changed it from the default — otherwise the warning
-uses the wrong cutoff.
+Both are editable via the card's visual config editor (gear icon).
 
-Everything else — entity selection, time range, marks — is set
-interactively in the card itself.
+## Documentation
+
+- **[USAGE.md](docs/USAGE.md)** — concepts, basic workflow, two worked
+  examples (derived-state inference sensors and integration porting),
+  known limitations.
+- **[EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md)** — JSON schema reference
+  for the export format. Useful if you're scripting against exports
+  with `jq` or similar.
+
+## Known limitations
+
+- Recorder retention is a hard floor. You can't query past your
+  `purge_keep_days`. The card warns when Begin exceeds the configured
+  cutoff, but it can't recover purged data.
+- No automatic alignment between live and reference timelines — that's
+  intentional, see USAGE.md.
+- No mobile optimization. Desktop assumed.
+- No CSV export. JSON only.
+- Entity selection + time inputs persist via localStorage; step
+  cursors, marks, and reference timelines do not (session-local).
 
 ## Building from source
 
 ```bash
 npm install
-npm run build
+npm run build       # produces dist/ha-state-timeline-card.js
+npm run deploy      # builds and copies to your HA www/community dir
+                    # (set DEPLOY_DEST env var to override path)
 ```
 
-This produces `dist/ha-state-timeline-card.js` with Lit inlined and
-minified.
+The source imports Lit from `unpkg.com` so it loads directly in a
+browser during development. The build script rewrites that to a bare
+`lit` specifier before invoking esbuild, producing a self-contained
+bundle.
 
-The source file (`src/ha-state-timeline-card.js`) imports Lit from
-`unpkg.com` so it can be loaded directly in a browser during development
-without a build step. The build script rewrites that import to a bare
-`lit` specifier before invoking esbuild.
+## License
 
-## Notes
-
-- Times are read from and displayed in the HA instance's configured
-  timezone (`hass.config.time_zone`), not the browser's local timezone.
-- Entity selection, driver pick, and the Begin/End time inputs persist
-  in `localStorage` (per origin) across page reloads. Step cursors,
-  marks, and any loaded reference timeline are session-local — they
-  reset every time you reopen the dashboard.
-- Loading a reference JSON turns the bottom panel into a twin stepper
-  that mirrors the live table's column layout, with its own ◀/▶ nav.
-  There is no automatic alignment between live and reference: timestamps
-  and durations drift between runs, so pattern-matching is left to the
-  human eye, which is faster and more accurate than any heuristic for
-  this kind of comparison.
-- No mobile optimization. Desktop assumed.
+MIT — see [LICENSE](LICENSE).
