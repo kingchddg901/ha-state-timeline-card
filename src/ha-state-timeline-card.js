@@ -527,17 +527,21 @@ class HaStateTimelineCard extends LitElement {
         // recorder is under load. Sort defensively.
         .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 
-      // Dedupe consecutive rows where state AND attributes are byte-identical.
-      // HA's recorder occasionally emits multiple rows for the same entity
-      // within a single logging tick when the source pushed several updates;
-      // those produce phantom steps with no real difference. Comparing
-      // attributes via JSON.stringify is good enough — order is stable across
-      // the same source.
+      // Dedupe consecutive rows that share the same ts AND state. HA's
+      // recorder emits multiple rows for the same entity within a single
+      // logging tick when the source pushes several updates; their floating-
+      // second timestamps round to the same millisecond in our conversion,
+      // and their attribute objects often look identical even when
+      // stableStringify says otherwise (HA can attach hidden properties
+      // or have key-set differences that aren't visible after JSON.stringify
+      // strips undefineds). Same entity + same state + same ms is by
+      // definition a single logical state — the user doesn't need five
+      // steps for it. Attribute-change tracking still works for rows at
+      // different timestamps, because the ts check fails there.
       const list = [];
       for (const row of mapped) {
         const last = list[list.length - 1];
-        if (last && last.state === row.state &&
-            JSON.stringify(last.attributes) === JSON.stringify(row.attributes)) {
+        if (last && last.state === row.state && last.ts === row.ts) {
           continue;
         }
         list.push(row);
