@@ -78,7 +78,6 @@ Both are editable via the card's visual config editor (gear icon).
 - No automatic alignment between live and reference timelines — that's
   intentional, see USAGE.md.
 - No mobile optimization. Desktop assumed.
-- No CSV export. JSON only.
 - Entity selection + time inputs persist via localStorage; step
   cursors, marks, and reference timelines do not (session-local).
 

@@ -15,6 +15,18 @@ If you want a chart, use HA's history viewer. If you want a stepper-style
 multi-entity correlated view of state transitions, you're in the right
 place.
 
+The two tools are complementary, not competing. A common workflow:
+
+1. Use this card to find the **exact moment** of the event you care
+   about — step through correlated transitions until you locate it.
+2. Note the timestamp and the entities involved.
+3. Switch to HA's history viewer and its **CSV export** for the precise
+   data slice — now that you know the window and the entities, HA's
+   built-in tooling gives you the data in the format other tools want.
+
+CSV export isn't in this card by design. By the time you know what
+you'd export, you already have a better tool for it.
+
 ## Concepts
 
 ### Driver entity
@@ -38,6 +50,13 @@ changed state. Each step shows:
 
 Walking forward and backward through steps gives you the per-event
 view that the history viewer's per-entity chart can't.
+
+**Note on `previous_state: null`.** At the first step in a search
+window, any entity whose state hadn't been observed before will show
+`previous_state` as `null` — there's nothing before the start of the
+window to compare against. Once an entity has had at least one
+transition inside the window, subsequent steps show its actual prior
+state. This is expected; it's not a missing-data bug.
 
 ### Marks and export
 
@@ -188,7 +207,6 @@ fires at the right cutoff.
   cutoff but it cannot recover purged data.
 - **No mobile optimization.** Desktop assumed. The stepper table is too
   dense for phone screens.
-- **No CSV export.** JSON only. Use `jq` or any JSON tool to slice.
 - **No automated diff** between two timelines. Side-by-side twin
   stepper, you walk them. See above.
 - **Entity selection persists per-origin via localStorage** — same HA
