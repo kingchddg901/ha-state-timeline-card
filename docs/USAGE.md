@@ -1,5 +1,7 @@
 # Usage
 
+![Card showing a stepper paused at Step 1 of 4: Alfred Active Cleaning Target transitioning from unavailable to Kitchen](State-Card.png)
+
 This card is a **state viewer**, not a history viewer. They sound similar
 and read the same recorder data, but they answer different questions.
 

@@ -3,6 +3,8 @@
 A Home Assistant Lovelace card that queries the recorder and lets you
 step through state transitions across multiple entities at once.
 
+![Screenshot of the state timeline card at a vacuum cleaning_target transition](docs/State-Card.png)
+
 It's a **state viewer**, not a history viewer. The HA history viewer
 charts values over time and wins for "where did temperature go this
 week." This card walks you through transitions between states across a
